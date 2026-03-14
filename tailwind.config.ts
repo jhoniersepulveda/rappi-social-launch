@@ -11,6 +11,14 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
+        rappi: {
+          orange: "#FF441B",
+          "light-orange": "#FF6B35",
+          black: "#1A1A1A",
+        },
+      },
+      fontFamily: {
+        sans: ["Inter", "sans-serif"],
       },
     },
   },
