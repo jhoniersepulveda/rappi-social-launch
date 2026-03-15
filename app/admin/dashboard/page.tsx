@@ -33,7 +33,7 @@ export default async function AdminDashboardPage() {
   // Map kitId → restaurantId
   const kitRestaurantMap = await prisma.graphicKit.findMany({
     where: {
-      id: { in: verificationCounts.map((v) => v.kitId) },
+      id: { in: verificationCounts.map((v: { kitId: string }) => v.kitId) },
     },
     select: { id: true, restaurantId: true },
   })
