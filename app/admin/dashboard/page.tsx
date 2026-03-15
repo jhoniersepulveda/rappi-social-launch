@@ -53,7 +53,7 @@ export default async function AdminDashboardPage() {
     ordersLast28Days: 0, // Manual field — populated by KAM
     createdAt: r.createdAt.toISOString(),
     boostedUntil: r.boostedUntil?.toISOString() || null,
-    incentives: r.incentives.map((i) => ({
+    incentives: r.incentives.map((i: typeof restaurants[0]['incentives'][0]) => ({
       ...i,
       expiresAt: i.expiresAt.toISOString(),
       activatedAt: i.activatedAt.toISOString(),
