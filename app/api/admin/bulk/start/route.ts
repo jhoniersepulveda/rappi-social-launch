@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { nanoid } from 'nanoid'
 import archiver from 'archiver'
+
+export const dynamic = 'force-dynamic'
 import { createJob, updateJob } from '@/lib/bulkProgress'
 import { generateImage } from '@/lib/ai/generateImage'
 import { composeGraphicKit, DIMENSIONS, type Variant } from '@/lib/services/imageComposer'

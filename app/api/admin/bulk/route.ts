@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import archiver from 'archiver'
 import { generateImage } from '@/lib/ai/generateImage'
+
+export const dynamic = 'force-dynamic'
 import { composeGraphicKit, DIMENSIONS, type Variant } from '@/lib/services/imageComposer'
 
 export const maxDuration = 300  // 5 min — generación puede ser lenta

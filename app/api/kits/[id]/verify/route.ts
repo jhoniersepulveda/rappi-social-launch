@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyPublication } from '@/lib/ai/verifyPublication'
+
+export const dynamic = 'force-dynamic'
 import { uploadBuffer } from '@/lib/services/storage'
 import { activateIncentive, checkMonthlyVerificationLimit } from '@/lib/services/incentive'
 

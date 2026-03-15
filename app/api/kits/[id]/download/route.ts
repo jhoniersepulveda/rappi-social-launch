@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { extractKeyFromUri, getSignedDownloadUrl } from '@/lib/services/storage'
+
+export const dynamic = 'force-dynamic'
 import archiver from 'archiver'
 import PDFDocument from 'pdfkit'
 import axios from 'axios'

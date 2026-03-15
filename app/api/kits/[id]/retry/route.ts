@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { generationQueue } from '@/lib/queue/generationQueue'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }

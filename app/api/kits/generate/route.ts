@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+
+export const dynamic = 'force-dynamic'
 import { generationQueue } from '@/lib/queue/generationQueue'
 
 const generateSchema = z.object({
