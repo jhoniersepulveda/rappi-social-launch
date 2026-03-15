@@ -1,5 +1,8 @@
 runConfig:
   runtime: nodejs20
+  timeoutSeconds: 300
+  cpu: 1
+  memoryMiB: 1024
 
 env:
   - variable: NEXTAUTH_SECRET

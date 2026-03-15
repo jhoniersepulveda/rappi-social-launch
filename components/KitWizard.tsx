@@ -101,7 +101,12 @@ export default function KitWizard({ restaurant: initialRestaurant, restaurants }
       }
 
       setKitId(data.kitId)
-      setKitStatus('generating')
+      if (data.imageUrls) {
+        setImageUrls(data.imageUrls)
+        setKitStatus('ready')
+      } else {
+        setKitStatus('generating')
+      }
       setStep('preview')
     } catch {
       setError('Error de conexión. Inténtalo nuevamente.')
@@ -129,7 +134,12 @@ export default function KitWizard({ restaurant: initialRestaurant, restaurants }
     const data = await res.json()
     if (res.ok) {
       setKitId(data.kitId)
-      setKitStatus('generating')
+      if (data.imageUrls) {
+        setImageUrls(data.imageUrls)
+        setKitStatus('ready')
+      } else {
+        setKitStatus('generating')
+      }
     } else {
       setError('No se pudo regenerar el kit')
       setKitStatus('ready')
@@ -237,7 +247,7 @@ export default function KitWizard({ restaurant: initialRestaurant, restaurants }
               disabled={!productName || !promotionText || isSubmitting}
               className="w-full bg-rappi-orange text-white font-bold py-4 rounded-2xl text-lg hover:bg-[#e03a16] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg"
             >
-              {isSubmitting ? '⏳ Iniciando generación...' : '✨ Generar kit con IA →'}
+              {isSubmitting ? '🎨 Generando con IA (30-90s)...' : '✨ Generar kit con IA →'}
             </button>
           </>
         )}
