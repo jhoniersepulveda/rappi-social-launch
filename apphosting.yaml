@@ -36,3 +36,8 @@ env:
     secret: KAM_PASSWORD
     availability:
       - RUNTIME
+  - variable: GOOGLE_CLOUD_PROJECT
+    value: rappi-social-launch
+    availability:
+      - BUILD
+      - RUNTIME

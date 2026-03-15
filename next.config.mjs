@@ -14,6 +14,7 @@ const nextConfig = {
       { protocol: 'https', hostname: 'images.rappi.pe' },
       { protocol: 'https', hostname: 'images.rappi.com.br' },
       { protocol: 'https', hostname: 'images.rappi.cl' },
+      { protocol: 'https', hostname: 'storage.googleapis.com' },
     ],
   },
   // Allow server actions from the worker process
