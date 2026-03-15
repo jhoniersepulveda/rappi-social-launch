@@ -47,7 +47,7 @@ export default async function AdminDashboardPage() {
     }
   }
 
-  const enrichedRestaurants = restaurants.map((r) => ({
+  const enrichedRestaurants = restaurants.map((r: typeof restaurants[0]) => ({
     ...r,
     verificationCount: restaurantVerificationCount[r.id] || 0,
     ordersLast28Days: 0, // Manual field — populated by KAM
