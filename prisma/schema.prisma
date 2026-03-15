@@ -14,6 +14,9 @@ model Restaurant {
   category     String
   topProducts  Json
   email        String?
+  city         String?
+  country      String?
+  rappiUrl     String?
   createdAt    DateTime    @default(now())
   isBoosted    Boolean     @default(false)
   boostedUntil DateTime?

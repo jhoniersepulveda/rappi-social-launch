@@ -1,6 +1,9 @@
 import sgMail from '@sendgrid/mail'
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY || '')
+const SENDGRID_CONFIGURED = !!process.env.SENDGRID_API_KEY
+if (SENDGRID_CONFIGURED) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY!)
+}
 
 const FROM_EMAIL = 'noreply@rappisociallaunch.com'
 const FROM_NAME = 'Rappi Social Launch'
@@ -100,7 +103,7 @@ export async function sendKitReminderEmail(restaurant: {
   name: string
   email?: string | null
 }): Promise<void> {
-  if (!restaurant.email) return
+  if (!restaurant.email || !SENDGRID_CONFIGURED) return
 
   await sgMail.send({
     to: restaurant.email,
@@ -114,7 +117,7 @@ export async function sendKitReadyEmail(
   restaurant: { name: string; email?: string | null },
   kitId: string // eslint-disable-line @typescript-eslint/no-unused-vars
 ): Promise<void> {
-  if (!restaurant.email) return
+  if (!restaurant.email || !SENDGRID_CONFIGURED) return
 
   await sgMail.send({
     to: restaurant.email,

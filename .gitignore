@@ -37,3 +37,12 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+.env.local
+CSVS/
+
+# Secrets & local config
+.env
+.env.local
+.claude/
+skills-lock.json
+public/uploads/

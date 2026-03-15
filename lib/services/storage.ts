@@ -5,6 +5,13 @@ import {
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import axios from 'axios'
+import fs from 'fs'
+import path from 'path'
+
+function isS3Configured(): boolean {
+  return !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY &&
+    process.env.AWS_ACCESS_KEY_ID !== 'xxx' && process.env.AWS_SECRET_ACCESS_KEY !== 'xxx')
+}
 
 function getS3Client(): S3Client {
   const config: ConstructorParameters<typeof S3Client>[0] = {
@@ -14,7 +21,6 @@ function getS3Client(): S3Client {
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
     },
   }
-  // Support Cloudflare R2 (S3-compatible)
   if (process.env.STORAGE_ENDPOINT) {
     config.endpoint = process.env.STORAGE_ENDPOINT
     config.forcePathStyle = true
@@ -24,15 +30,27 @@ function getS3Client(): S3Client {
 
 const BUCKET = process.env.S3_BUCKET || 'rappi-social-launch'
 
+// Local filesystem fallback (dev mode when S3 is not configured)
+async function uploadBufferLocal(buffer: Buffer, key: string): Promise<string> {
+  const normalizedKey = key.replace(/\\/g, '/')
+  const filePath = path.join(process.cwd(), 'public', 'uploads', normalizedKey)
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.promises.writeFile(filePath, buffer)
+  return `/uploads/${normalizedKey}`
+}
+
 export async function uploadBuffer(
   buffer: Buffer,
   key: string,
   contentType: string
 ): Promise<string> {
-  const s3 = getS3Client()
-  // Normalize path separators for S3
   const normalizedKey = key.replace(/\\/g, '/')
 
+  if (!isS3Configured()) {
+    return uploadBufferLocal(buffer, normalizedKey)
+  }
+
+  const s3 = getS3Client()
   await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
@@ -49,9 +67,16 @@ export async function getSignedDownloadUrl(
   key: string,
   expiresIn = 3600
 ): Promise<string> {
-  const s3 = getS3Client()
   const normalizedKey = key.replace(/\\/g, '/')
 
+  // Local path — return as-is (already a public URL)
+  if (normalizedKey.startsWith('/uploads/')) return normalizedKey
+
+  if (!isS3Configured()) {
+    return `/uploads/${normalizedKey}`
+  }
+
+  const s3 = getS3Client()
   const command = new GetObjectCommand({
     Bucket: BUCKET,
     Key: normalizedKey,

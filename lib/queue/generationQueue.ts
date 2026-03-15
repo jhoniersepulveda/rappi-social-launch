@@ -1,12 +1,13 @@
 import { Queue } from 'bullmq'
 
-// Use connection URL string — BullMQ handles its own ioredis instance internally
 const redisUrl = new URL(process.env.REDIS_URL || 'redis://localhost:6379')
+const isTLS = redisUrl.protocol === 'rediss:'
 
 export const redisConnection = {
   host: redisUrl.hostname,
   port: parseInt(redisUrl.port || '6379', 10),
-  password: redisUrl.password || undefined,
+  password: redisUrl.password ? decodeURIComponent(redisUrl.password) : undefined,
+  tls: isTLS ? {} : undefined,
 }
 
 export const generationQueue = new Queue('image-generation', {
