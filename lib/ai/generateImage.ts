@@ -2,7 +2,7 @@ import Replicate from 'replicate'
 import sharp from 'sharp'
 import { BudgetExceededError } from '@/lib/errors'
 
-const GEMINI_MODEL   = 'gemini-2.0-flash-preview-image-generation'
+const GEMINI_MODEL   = 'gemini-3.1-flash-image-preview'
 const IDEOGRAM_MODEL = 'ideogram-ai/ideogram-v2'
 
 // ---------------------------------------------------------------------------
