@@ -24,13 +24,17 @@ function getGCSClient(): Storage {
 async function uploadBufferGCS(buffer: Buffer, key: string, contentType: string): Promise<string> {
   const storage = getGCSClient()
   const file    = storage.bucket(GCS_BUCKET).file(key)
+  console.log(`[GCS] Uploading ${key} to bucket ${GCS_BUCKET} (${buffer.length} bytes)`)
   await file.save(buffer, {
     contentType,
     metadata: { cacheControl: 'public, max-age=31536000' },
   })
-  // Make the file publicly readable (requires Fine-Grained ACL on bucket)
-  try { await file.makePublic() } catch { /* bucket may use Uniform Access — public via bucket policy */ }
-  return `https://storage.googleapis.com/${GCS_BUCKET}/${key}`
+  try { await file.makePublic() } catch (e) {
+    console.warn('[GCS] makePublic skipped (Uniform Access):', (e as Error).message)
+  }
+  const url = `https://storage.googleapis.com/${GCS_BUCKET}/${key}`
+  console.log(`[GCS] ✓ Uploaded: ${url}`)
+  return url
 }
 
 // ── S3 / Cloudflare R2 (optional fallback) ────────────────────────────────────
