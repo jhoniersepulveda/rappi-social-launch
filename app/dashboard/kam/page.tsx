@@ -68,11 +68,14 @@ export default function KAMDashboard() {
 
   useEffect(() => {
     if (tab !== 'history') return
-    fetch('/api/kits/recent')
+    const url = selected
+      ? `/api/kits/recent?restaurantId=${selected.id}`
+      : '/api/kits/recent'
+    fetch(url)
       .then(r => r.json())
       .then((d: unknown) => Array.isArray(d) ? setRecentKits(d as Kit[]) : null)
       .catch(console.error)
-  }, [tab])
+  }, [tab, selected])
 
   // Poll kit status
   useEffect(() => {
@@ -95,6 +98,7 @@ export default function KAMDashboard() {
 
   function selectRestaurant(r: Restaurant) {
     setSelected(r)
+    setTab('generate')
     setProductChoice('')
     setCustomProduct('')
     setPromotionText('')
@@ -450,8 +454,22 @@ export default function KAMDashboard() {
 
                 {/* Failed */}
                 {kitStatus === 'failed' && (
-                  <div className="mt-5 p-4 bg-red-950/40 border border-red-800/40 rounded-xl text-red-400 text-sm text-center">
-                    La generación falló. Intenta de nuevo.
+                  <div className="mt-5 p-5 bg-red-950/30 border border-red-800/50 rounded-xl space-y-3">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle size={16} className="text-red-400 flex-shrink-0" />
+                      <p className="text-red-300 font-bold text-sm">No se pudo generar</p>
+                    </div>
+                    <p className="text-[#888] text-xs leading-relaxed">
+                      Una imagen no pudo generarse. Haz click en Regenerar para intentar de nuevo.
+                    </p>
+                    <button
+                      onClick={() => doGenerate()}
+                      className="flex items-center gap-1.5 text-xs font-bold text-white
+                        bg-[#FF441B] hover:bg-[#e03a16] rounded-lg px-3 py-2 transition-colors"
+                    >
+                      <RefreshCw size={11} />
+                      Regenerar
+                    </button>
                   </div>
                 )}
 
@@ -463,7 +481,7 @@ export default function KAMDashboard() {
                       <p className="text-red-300 font-bold text-sm">Sin saldo disponible</p>
                     </div>
                     <p className="text-[#888] text-xs leading-relaxed">
-                      No hay saldo disponible para generar imágenes en este momento.
+                      En este momento no tiene saldo disponible para generar nuevas imágenes.
                     </p>
                     <button
                       onClick={() => doGenerate(true)}
@@ -512,7 +530,9 @@ export default function KAMDashboard() {
           {/* ── HISTORY TAB ── */}
           {tab === 'history' && (
             <div className="p-8">
-              <h2 className="text-lg font-black text-white mb-6">Últimos 50 kits generados</h2>
+              <h2 className="text-lg font-black text-white mb-6">
+                {selected ? `Historial — ${selected.name}` : 'Últimos 50 kits generados'}
+              </h2>
               <div className="space-y-2">
                 {recentKits.length === 0 && (
                   <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-10 text-center">

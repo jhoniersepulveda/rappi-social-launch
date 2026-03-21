@@ -1,19 +1,11 @@
-import Replicate from 'replicate'
-import sharp from 'sharp'
-import { BudgetExceededError } from '@/lib/errors'
+import { BudgetExceededError, GenerationFailedError } from '@/lib/errors'
 
-const GEMINI_MODEL   = 'gemini-3.1-flash-image-preview'
-const IDEOGRAM_MODEL = 'ideogram-ai/ideogram-v2'
+const GEMINI_MODEL = 'gemini-3.1-flash-image-preview'
 
 // ---------------------------------------------------------------------------
 // Error classification
 // ---------------------------------------------------------------------------
 
-/**
- * True only when Gemini signals the account has genuinely run out of credit.
- * A plain 429 with "Too Many Requests" / "rate limit" is NOT a budget error —
- * it is a temporary throttle that should be retried.
- */
 /**
  * Returns true ONLY for genuine account-level billing exhaustion.
  * Plain 429 rate limits are never budget errors — they should be retried.
@@ -25,99 +17,38 @@ function isBudgetError(status: number, message: string): boolean {
   if (message.includes('RESOURCE_EXHAUSTED') && lower.includes('quota')) return true
 
   // Explicit billing phrases regardless of status code
-  if (lower.includes('spending cap'))              return true   // "exceeded its spending cap"
-  if (lower.includes('insufficient funds'))        return true
-  if (lower.includes('payment required'))          return true
-  if (lower.includes('billing account disabled'))  return true
+  if (lower.includes('spending cap'))             return true
+  if (lower.includes('insufficient funds'))       return true
+  if (lower.includes('payment required'))         return true
+  if (lower.includes('billing account disabled')) return true
 
-  // Everything else — including bare 429, "too many requests", "rate limit" — is NOT a budget error
   return false
 }
 
-/**
- * Returns true for temporary rate-limit throttling — safe to retry with backoff.
- * Any 429 that is not a confirmed budget error counts as rate limit.
- */
-function isRateLimitError(status: number, message: string): boolean {
-  if (status !== 429) return false
-  return !isBudgetError(status, message)
+// Delay in ms per HTTP status code before retrying
+const RETRY_DELAY_MS: Record<number, number> = {
+  429: 10000, // rate limit — wait 10 s
+  503: 5000,  // overload  — wait 5 s
+  500: 3000,  // server err — wait 3 s
 }
 
-// ---------------------------------------------------------------------------
-// Fallback: naranja sólido con nombre del producto
-// ---------------------------------------------------------------------------
-async function orangeFallback(productName: string): Promise<string> {
-  const display  = productName.length > 24 ? productName.substring(0, 23) + '…' : productName
-  const fontSize = display.length > 16 ? 52 : 64
-  const svg = `<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
-    <rect width="1024" height="1024" fill="#FF441B"/>
-    <text x="512" y="512" font-family="Arial Black,Arial,sans-serif" font-size="${fontSize}"
-      font-weight="900" fill="white" text-anchor="middle" dominant-baseline="central">${display}</text>
-  </svg>`
-  const buf = await sharp(Buffer.from(svg)).png().toBuffer()
-  return `data:image/png;base64,${buf.toString('base64')}`
-}
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // ---------------------------------------------------------------------------
-// Ideogram (Replicate) — fallback cuando Gemini falla por razones técnicas
-// (NO se usa como fallback de errores de presupuesto)
-// ---------------------------------------------------------------------------
-async function generateWithIdeogram(prompt: string, productName: string): Promise<string> {
-  const apiKey = process.env.REPLICATE_API_KEY
-  if (!apiKey || apiKey === 'r8_xxx') {
-    console.warn('[Ideogram] No REPLICATE_API_KEY, usando fallback naranja')
-    return orangeFallback(productName)
-  }
-
-  console.log('[Ideogram] Usando Replicate como fallback técnico...')
-  const replicate = new Replicate({ auth: apiKey })
-
-  const output = await replicate.run(IDEOGRAM_MODEL, {
-    input: {
-      prompt,
-      aspect_ratio:        '1:1',
-      style_type:          'Design',
-      magic_prompt_option: 'Off',
-    },
-  })
-
-  const first = Array.isArray(output) ? output[0] : output
-  if (!first) throw new Error('Ideogram returned no output')
-
-  if (typeof first === 'object' && 'readable' in (first as object)) {
-    const reader = (first as ReadableStream).getReader()
-    const chunks: Uint8Array[] = []
-    let done = false
-    while (!done) {
-      const { value, done: d } = await reader.read()
-      if (value) chunks.push(value)
-      done = d
-    }
-    const buf = Buffer.concat(chunks.map(c => Buffer.from(c)))
-    return `data:image/png;base64,${buf.toString('base64')}`
-  }
-
-  const url = String(first)
-  const res  = await fetch(url)
-  if (!res.ok) throw new Error(`Ideogram download failed: ${res.status}`)
-  const buf = Buffer.from(await res.arrayBuffer())
-  return `data:image/png;base64,${buf.toString('base64')}`
-}
-
-// ---------------------------------------------------------------------------
-// Gemini con retry — soporta imagen de referencia opcional
-// Lanza BudgetExceededError si detecta error de cuota/billing (sin fallback)
+// Gemini con retry robusto — sin fallback naranja
+// Lanza BudgetExceededError si detecta error de cuota/billing.
+// Lanza GenerationFailedError si los 3 intentos fallan por cualquier razón.
 // ---------------------------------------------------------------------------
 export async function generateImage(
   prompt: string,
   productName: string,
   referenceImageUrl?: string,
-  productDescription?: string
+  productDescription?: string,
+  logoImageUrl?: string,
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
-    console.warn('[Gemini] No GEMINI_API_KEY, usando Ideogram')
-    return generateWithIdeogram(prompt, productName)
+    throw new GenerationFailedError('No GEMINI_API_KEY configured')
   }
 
   const productEmphasis =
@@ -144,6 +75,21 @@ export async function generateImage(
     }
   }
 
+  if (logoImageUrl) {
+    try {
+      console.log(`[Gemini] Cargando logo del restaurante: ${logoImageUrl}`)
+      const logoRes = await fetch(logoImageUrl, { signal: AbortSignal.timeout(10000) })
+      if (logoRes.ok) {
+        const logoBuf = Buffer.from(await logoRes.arrayBuffer())
+        const mime    = logoRes.headers.get('content-type') || 'image/png'
+        parts.push({ inline_data: { mime_type: mime, data: logoBuf.toString('base64') } })
+        console.log('[Gemini] Logo del restaurante adjuntado')
+      }
+    } catch {
+      console.warn('[Gemini] No se pudo cargar el logo del restaurante, continuando sin él')
+    }
+  }
+
   const url  = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`
   const body = {
     contents: [{ parts }],
@@ -152,6 +98,8 @@ export async function generateImage(
 
   console.log(`[Gemini] Modelo: ${GEMINI_MODEL}`)
   console.log(`[Gemini] Prompt: ${prompt.substring(0, 120)}...`)
+
+  let lastError: Error = new Error('unknown')
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -165,16 +113,14 @@ export async function generateImage(
         const payload = await res.json() as { error?: { message?: string; code?: number } }
         const errMsg  = payload.error?.message ?? res.statusText
 
-        // Always log the exact Gemini error for diagnosis
         console.log(`[Gemini] Error detalle: status=${res.status} message="${errMsg}"`)
 
-        // ── Real budget exhaustion — no fallback, fail the job ──
+        // Real budget exhaustion — fail immediately, no retry
         if (isBudgetError(res.status, errMsg)) {
           console.error(`[Gemini] SALDO INSUFICIENTE (${res.status}): ${errMsg}`)
           throw new BudgetExceededError()
         }
 
-        // ── Temporary rate limit — handled in catch below for retry ──
         throw new Error(`Gemini error ${res.status}: ${errMsg}`)
       }
 
@@ -191,31 +137,25 @@ export async function generateImage(
       return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`
 
     } catch (error) {
-      // Budget errors propagate immediately — no retry, no Ideogram fallback
+      // Budget errors propagate immediately — no retry
       if (error instanceof BudgetExceededError) throw error
 
-      const msg = (error as Error).message
+      lastError = error as Error
+      const msg = lastError.message
 
-      // Extract HTTP status from the error message for classification
       const statusMatch = msg.match(/Gemini error (\d+):/)
       const httpStatus  = statusMatch ? parseInt(statusMatch[1]) : 0
 
-      const retryable =
-        msg.includes('503') ||
-        isRateLimitError(httpStatus, msg)
-
-      if (retryable && attempt < 3) {
-        console.log(`[Gemini] Intento ${attempt} fallido (rate limit / 503), reintentando en 15s...`)
-        await new Promise(r => setTimeout(r, 15000))
-      } else if (retryable) {
-        console.warn('[Gemini] 3 intentos fallidos por throttling, cambiando a Ideogram...')
-        return generateWithIdeogram(prompt, productName)
-      } else {
-        console.warn(`[Gemini] Error no recuperable, cambiando a Ideogram: ${msg}`)
-        return generateWithIdeogram(prompt, productName)
+      if (attempt < 3) {
+        const delay = RETRY_DELAY_MS[httpStatus] ?? 3000
+        console.log(`[Gemini] Intento ${attempt} fallido — status=${httpStatus} razón="${msg}" — reintentando en ${delay / 1000}s...`)
+        await sleep(delay)
       }
     }
   }
 
-  return generateWithIdeogram(prompt, productName)
+  // All 3 attempts failed — NO orange fallback, fail the job
+  console.log('[Gemini] FALLBACK ACTIVADO - razón:', lastError.message, 'status:', (lastError as NodeJS.ErrnoException).code ?? 'n/a')
+  console.error(`[Gemini] 3 intentos fallidos. Última razón: ${lastError.message}`)
+  throw new GenerationFailedError(lastError.message)
 }

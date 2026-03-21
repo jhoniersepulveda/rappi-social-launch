@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { generateImage } from '@/lib/ai/generateImage'
-import { BudgetExceededError } from '@/lib/errors'
+import { BudgetExceededError, GenerationFailedError } from '@/lib/errors'
 import { composeGraphicKit, DIMENSIONS, type Variant } from '@/lib/services/imageComposer'
 import { uploadBuffer } from '@/lib/services/storage'
 import { generateHash, buildRappiUrl } from '@/lib/services/deeplink'
@@ -22,8 +22,13 @@ function buildPrompt(
   restaurantName: string,
   productName: string,
   promotionText: string,
-  rappiUrl: string
+  rappiUrl: string,
+  hasLogo: boolean,
 ): string {
+  const logoInstruction = hasLogo
+    ? `The restaurant has its own brand logo. Include it subtly in the design, smaller than the Rappi logo, positioned in a corner or integrated naturally into the layout. Restaurant name: ${restaurantName}\n`
+    : ''
+
   return (
     `You are an award-winning art director for a top Latin American advertising agency.\n` +
     `Create a stunning social media advertisement for ${restaurantName} on Rappi Colombia.\n` +
@@ -31,8 +36,9 @@ function buildPrompt(
     `Brand rules (the ONLY constraints):\n` +
     `- Rappi orange #FF441B must be present\n` +
     `- Restaurant name "${restaurantName}" must appear in the design\n` +
-    `- Include a clear call to action with the text "Pide en Rappi" — this CTA links to ${rappiUrl}\n\n` +
-    `Everything else is YOUR creative decision.\n` +
+    `- Include a clear call to action with the text "Pide en Rappi" — this CTA links to ${rappiUrl}\n` +
+    logoInstruction +
+    `\nEverything else is YOUR creative decision.\n` +
     `Make it so good people stop scrolling and order immediately.\n` +
     `Square format, no watermarks.\n\n` +
     `IMPORTANT - Rappi branding must be included in the design:\n` +
@@ -71,7 +77,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const rappiUrl   = buildRappiUrl(restaurant.slug, kit.id)
-    const basePrompt = buildPrompt(restaurant.name, productName, promotionText, rappiUrl)
+    const logoUrl    = restaurant.logoUrl || undefined
+    const basePrompt = buildPrompt(restaurant.name, productName, promotionText, rappiUrl, !!logoUrl)
     const hash       = generateHash()
 
     // Look up product description for prompt emphasis
@@ -82,9 +89,14 @@ export async function POST(req: NextRequest) {
 
     const imageUris: Record<string, string> = {}
 
-    for (const variant of VARIANTS) {
+    for (let i = 0; i < VARIANTS.length; i++) {
+      if (i > 0) {
+        console.log('[generate] Esperando 4s antes de la siguiente imagen...')
+        await new Promise(r => setTimeout(r, 4000))
+      }
+      const variant = VARIANTS[i]
       const prompt = `${basePrompt}\n\nFormat: ${formatSuffix[variant]}`
-      const aiImageUrl = await generateImage(prompt, productName, undefined, productDescription)
+      const aiImageUrl = await generateImage(prompt, productName, undefined, productDescription, logoUrl)
 
       let imageBuffer: Buffer
       if (aiImageUrl.startsWith('data:')) {
@@ -119,6 +131,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Presupuesto de IA agotado. Contacta al administrador.' },
         { status: 503 }
+      )
+    }
+
+    if (error instanceof GenerationFailedError) {
+      console.error('[generate] GenerationFailedError:', (error as Error).message)
+      await prisma.graphicKit.update({ where: { id: kit.id }, data: { status: 'failed' } })
+      return NextResponse.json(
+        { error: 'Una imagen no pudo generarse. Haz click en Regenerar para intentar de nuevo.' },
+        { status: 500 }
       )
     }
 
