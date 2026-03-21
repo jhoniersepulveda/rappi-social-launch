@@ -14,7 +14,8 @@ export async function GET(
       const send = (data: object) => {
         // Remove zipBuffer from SSE payload (too large)
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { zipBuffer, ...safe } = data as Record<string, unknown>
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { zipBuffer, remainingRows, ...safe } = data as Record<string, unknown>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(safe)}\n\n`))
       }
 
@@ -30,7 +31,7 @@ export async function GET(
 
         send(job)
 
-        if (job.status === 'done' || job.status === 'error') {
+        if (job.status === 'done' || job.status === 'error' || job.status === 'budget_paused') {
           clearInterval(iv)
           controller.close()
         }

@@ -64,3 +64,15 @@ model Incentive {
   activatedAt  DateTime   @default(now())
   expiresAt    DateTime
 }
+
+model BulkBatch {
+  id         String   @id
+  createdAt  DateTime @default(now())
+  status     String   // 'done' | 'partial' | 'error'
+  totalRows  Int
+  successful Int      @default(0)
+  failed     Int      @default(0)
+  zipUrl     String?
+  previews   Json?    // KitPreview[]
+  errors     Json?    // string[]
+}

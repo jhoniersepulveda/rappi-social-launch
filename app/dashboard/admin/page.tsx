@@ -1,28 +1,50 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { signOut } from 'next-auth/react'
 import Image from 'next/image'
 import {
-  Upload, Zap, Download, CheckCircle, Loader2, X, FileText, AlertCircle, AlertTriangle, TrendingUp,
+  Upload, Zap, Download, CheckCircle, Loader2, X, FileText,
+  AlertCircle, AlertTriangle, TrendingUp, ChevronDown, ChevronRight,
+  RefreshCw, Clock, ImageIcon,
 } from 'lucide-react'
 import { useBudget } from '@/lib/hooks/useBudget'
 
 interface Progress {
-  status:    'running' | 'done' | 'error'
+  status:    'running' | 'done' | 'error' | 'budget_paused'
   total:     number
+  totalRows: number
   completed: number
   current:   string
   errors:    string[]
+  batchId?:  string
 }
 
 interface CsvRow {
-  restaurante: string
-  logo_url: string
-  producto: string
-  foto_producto_url: string
+  restaurante:          string
+  logo_url:             string
+  producto:             string
+  foto_producto_url:    string
   descripcion_producto: string
-  texto_promocion: string
+  texto_promocion:      string
+}
+
+interface KitPreview {
+  restaurant: string
+  product:    string
+  feedUrl:    string
+}
+
+interface BatchRecord {
+  id:         string
+  createdAt:  string
+  status:     string
+  totalRows:  number
+  successful: number
+  failed:     number
+  zipUrl:     string | null
+  previews:   KitPreview[] | null
+  errors:     string[] | null
 }
 
 function parseCSVPreview(text: string): CsvRow[] {
@@ -44,18 +66,40 @@ function parseCSVPreview(text: string): CsvRow[] {
 }
 
 export default function AdminDashboard() {
-  const [csvFile,  setCsvFile]  = useState<File | null>(null)
-  const [dragging, setDragging] = useState(false)
-  const [preview,  setPreview]  = useState<CsvRow[]>([])
+  const [csvFile,   setCsvFile]   = useState<File | null>(null)
+  const [dragging,  setDragging]  = useState(false)
+  const [preview,   setPreview]   = useState<CsvRow[]>([])
   const [totalRows, setTotalRows] = useState(0)
-  const [jobId,    setJobId]    = useState<string | null>(null)
-  const [progress, setProgress] = useState<Progress | null>(null)
-  const [starting, setStarting] = useState(false)
-  const [error,    setError]    = useState('')
+  const [jobId,     setJobId]     = useState<string | null>(null)
+  const [progress,  setProgress]  = useState<Progress | null>(null)
+  const [starting,  setStarting]  = useState(false)
+  const [resuming,  setResuming]  = useState(false)
+  const [error,     setError]     = useState('')
+
+  // History
+  const [batches,      setBatches]      = useState<BatchRecord[]>([])
+  const [expandedBatch, setExpandedBatch] = useState<string | null>(null)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+
   const fileRef = useRef<HTMLInputElement>(null)
   const esRef   = useRef<EventSource | null>(null)
 
   const { hasBudgetIssue, generatedThisMonth, monthlyLimit, nearLimit } = useBudget()
+
+  // Load history on mount
+  useEffect(() => {
+    loadHistory()
+  }, [])
+
+  async function loadHistory() {
+    setLoadingHistory(true)
+    try {
+      const res  = await fetch('/api/admin/bulk/batches')
+      const data = await res.json() as BatchRecord[]
+      setBatches(Array.isArray(data) ? data : [])
+    } catch { /* non-critical */ }
+    finally { setLoadingHistory(false) }
+  }
 
   function loadFile(f: File) {
     setCsvFile(f)
@@ -63,8 +107,8 @@ export default function AdminDashboard() {
     setPreview([])
     const reader = new FileReader()
     reader.onload = ev => {
-      const text = ev.target?.result as string
-      const rows = parseCSVPreview(text)
+      const text  = ev.target?.result as string
+      const rows  = parseCSVPreview(text)
       const total = text.trim().split('\n').filter(Boolean).length - 1
       setPreview(rows)
       setTotalRows(Math.max(total, 0))
@@ -94,6 +138,21 @@ export default function AdminDashboard() {
     esRef.current?.close()
   }
 
+  function subscribeToJob(jId: string) {
+    esRef.current?.close()
+    const es = new EventSource(`/api/admin/bulk/progress/${jId}`)
+    esRef.current = es
+    es.onmessage = (e) => {
+      const p = JSON.parse(e.data as string) as Progress
+      setProgress(p)
+      if (p.status === 'done' || p.status === 'error' || p.status === 'budget_paused') {
+        es.close()
+        if (p.status === 'done') loadHistory() // refresh history after completion
+      }
+    }
+    es.onerror = () => es.close()
+  }
+
   async function handleStart() {
     if (!csvFile) return
     setStarting(true)
@@ -113,20 +172,33 @@ export default function AdminDashboard() {
 
     setJobId(data.jobId)
     setStarting(false)
-
-    const es = new EventSource(`/api/admin/bulk/progress/${data.jobId}`)
-    esRef.current = es
-    es.onmessage = (e) => {
-      const p = JSON.parse(e.data as string) as Progress
-      setProgress(p)
-      if (p.status === 'done' || p.status === 'error') es.close()
-    }
-    es.onerror = () => es.close()
+    subscribeToJob(data.jobId)
   }
 
-  const pct = progress && progress.total > 0
-    ? Math.round((progress.completed / progress.total) * 100)
+  async function handleResume() {
+    if (!jobId) return
+    setResuming(true)
+    const res  = await fetch(`/api/admin/bulk/resume/${jobId}`, { method: 'POST' })
+    const data = await res.json() as { jobId?: string; error?: string }
+
+    if (!res.ok || !data.jobId) {
+      setError(data.error ?? 'Error al continuar')
+      setResuming(false)
+      return
+    }
+
+    setJobId(data.jobId)
+    setProgress(null)
+    setResuming(false)
+    subscribeToJob(data.jobId)
+  }
+
+  const completedRows = progress ? Math.floor(progress.completed / 3) : 0
+  const pct = progress && progress.totalRows > 0
+    ? Math.round((completedRows / progress.totalRows) * 100)
     : 0
+
+  const showPills = (progress?.totalRows ?? 0) <= 80
 
   return (
     <div className="min-h-screen bg-[#0d0d0d] text-white flex flex-col">
@@ -156,7 +228,6 @@ export default function AdminDashboard() {
         {/* Generation counter + budget alerts */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 
-          {/* Counter card */}
           <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-4 flex items-center gap-4">
             <div className="w-10 h-10 rounded-xl bg-[#FF441B]/15 flex items-center justify-center flex-shrink-0">
               <TrendingUp size={18} className="text-[#FF441B]" />
@@ -172,8 +243,7 @@ export default function AdminDashboard() {
               {monthlyLimit > 0 && (
                 <div className="mt-1.5 h-1 bg-[#222] rounded-full w-32 overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all
-                      ${nearLimit ? 'bg-red-500' : 'bg-[#FF441B]'}`}
+                    className={`h-full rounded-full transition-all ${nearLimit ? 'bg-red-500' : 'bg-[#FF441B]'}`}
                     style={{ width: `${Math.min(100, (generatedThisMonth / monthlyLimit) * 100)}%` }}
                   />
                 </div>
@@ -181,37 +251,20 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Budget status card */}
           {hasBudgetIssue ? (
-            <div className="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 space-y-3">
-              <div className="flex items-center gap-3">
-                <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-red-300 font-semibold text-sm">Sin saldo disponible</p>
-                  <p className="text-red-600 text-xs mt-0.5">
-                    Recarga el saldo en Google AI Studio para continuar.
-                  </p>
-                </div>
+            <div className="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 flex items-center gap-3">
+              <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
+              <div>
+                <p className="text-red-300 font-semibold text-sm">Sin saldo disponible</p>
+                <p className="text-red-600 text-xs mt-0.5">Recarga el saldo para continuar.</p>
               </div>
-              <a
-                href="https://aistudio.google.com/billing"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-1.5 w-full text-xs font-bold
-                  text-white bg-[#FF441B] hover:bg-[#e03a16] rounded-lg px-3 py-2.5
-                  transition-colors"
-              >
-                Recargar en Google AI Studio
-              </a>
             </div>
           ) : nearLimit ? (
             <div className="bg-yellow-950/40 border border-yellow-800/60 rounded-2xl p-4 flex items-center gap-3">
               <AlertCircle size={20} className="text-yellow-400 flex-shrink-0" />
               <div>
                 <p className="text-yellow-300 font-semibold text-sm">Saldo bajo</p>
-                <p className="text-yellow-700 text-xs mt-0.5">
-                  Quedan menos de 10 generaciones del límite mensual
-                </p>
+                <p className="text-yellow-700 text-xs mt-0.5">Quedan menos de 10 generaciones del límite mensual</p>
               </div>
             </div>
           ) : (
@@ -262,13 +315,7 @@ export default function AdminDashboard() {
                     ? 'border-[#00C853]/40 bg-[#00C853]/5'
                     : 'border-[#333] hover:border-[#555] bg-[#1a1a1a]'}`}
             >
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".csv,.xlsx"
-                className="hidden"
-                onChange={handleFileChange}
-              />
+              <input ref={fileRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleFileChange} />
 
               {csvFile ? (
                 <div>
@@ -301,22 +348,16 @@ export default function AdminDashboard() {
                 <div className="px-4 py-3 border-b border-[#333] flex items-center justify-between">
                   <p className="text-[#CCCCCC] text-sm font-semibold">
                     Vista previa
-                    <span className="text-[#555] font-normal ml-2">
-                      ({preview.length} de {totalRows} filas)
-                    </span>
+                    <span className="text-[#555] font-normal ml-2">({preview.length} de {totalRows} filas)</span>
                   </p>
-                  {totalRows > 10 && (
-                    <p className="text-[#555] text-xs">+{totalRows - 10} más no mostradas</p>
-                  )}
+                  {totalRows > 10 && <p className="text-[#555] text-xs">+{totalRows - 10} más no mostradas</p>}
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-[#333]">
                         {['Restaurante', 'Producto', 'Promoción', 'Foto'].map(h => (
-                          <th key={h} className="text-left px-4 py-2.5 text-[#888] font-semibold uppercase tracking-wider">
-                            {h}
-                          </th>
+                          <th key={h} className="text-left px-4 py-2.5 text-[#888] font-semibold uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -381,6 +422,10 @@ export default function AdminDashboard() {
                   <><AlertCircle size={16} className="text-red-400" />
                     <p className="font-bold text-red-400">Error</p></>
                 )}
+                {progress.status === 'budget_paused' && (
+                  <><AlertTriangle size={16} className="text-yellow-400" />
+                    <p className="font-bold text-yellow-400">Pausado — saldo agotado</p></>
+                )}
               </div>
               <p className="text-[#FF441B] font-mono font-black text-2xl">{pct}%</p>
             </div>
@@ -389,7 +434,11 @@ export default function AdminDashboard() {
             <div className="h-2 bg-[#222] rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500
-                  ${progress.status === 'done' ? 'bg-green-500' : 'bg-[#FF441B]'}`}
+                  ${progress.status === 'done'
+                    ? 'bg-green-500'
+                    : progress.status === 'budget_paused'
+                      ? 'bg-yellow-500'
+                      : 'bg-[#FF441B]'}`}
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -397,28 +446,50 @@ export default function AdminDashboard() {
             {/* Stats */}
             <div className="flex items-center justify-between text-sm">
               <span className="text-[#888]">
-                <span className="text-white font-semibold">{progress.completed}</span>
+                <span className="text-white font-semibold">{completedRows}</span>
                 {' '}de{' '}
-                <span className="text-white font-semibold">{progress.total}</span>
-                {' '}packs
+                <span className="text-white font-semibold">{progress.totalRows}</span>
+                {' '}restaurantes
               </span>
               {progress.current && (
-                <span className="text-[#555] text-xs truncate max-w-xs text-right">
-                  {progress.current}
-                </span>
+                <span className="text-[#555] text-xs truncate max-w-xs text-right">{progress.current}</span>
               )}
             </div>
 
-            {/* Per-row progress (visual pills) */}
-            {progress.total > 0 && (
+            {/* Per-row progress pills (only for small batches) */}
+            {showPills && progress.totalRows > 0 && (
               <div className="flex flex-wrap gap-1.5">
-                {Array.from({ length: progress.total }).map((_, i) => (
+                {Array.from({ length: progress.totalRows }).map((_, i) => (
                   <div
                     key={i}
                     className={`h-1.5 w-6 rounded-full transition-colors duration-300
-                      ${i < progress.completed ? 'bg-[#FF441B]' : 'bg-[#2a2a2a]'}`}
+                      ${i < completedRows ? 'bg-[#FF441B]' : 'bg-[#2a2a2a]'}`}
                   />
                 ))}
+              </div>
+            )}
+
+            {/* Budget paused message */}
+            {progress.status === 'budget_paused' && (
+              <div className="bg-yellow-950/30 border border-yellow-800/40 rounded-xl p-4 space-y-3">
+                <p className="text-yellow-300 text-sm leading-relaxed">
+                  Se agotó el saldo disponible. Se generaron{' '}
+                  <span className="font-bold">{completedRows}</span> de{' '}
+                  <span className="font-bold">{progress.totalRows}</span> kits.
+                  Recarga el saldo y continúa desde donde quedó.
+                </p>
+                <button
+                  onClick={handleResume}
+                  disabled={resuming}
+                  className="flex items-center gap-1.5 text-xs font-bold text-white
+                    bg-[#FF441B] hover:bg-[#e03a16] disabled:bg-[#444]
+                    rounded-lg px-4 py-2.5 transition-colors"
+                >
+                  {resuming
+                    ? <><Loader2 size={12} className="animate-spin" /> Continuando...</>
+                    : <><RefreshCw size={12} /> Continuar desde el kit {completedRows + 1}</>
+                  }
+                </button>
               </div>
             )}
 
@@ -462,6 +533,140 @@ export default function AdminDashboard() {
             )}
           </div>
         )}
+
+        {/* ── HISTORIAL DE GENERACIONES MASIVAS ── */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-black text-white">Historial de generaciones masivas</h2>
+            <button
+              onClick={loadHistory}
+              disabled={loadingHistory}
+              className="text-xs text-[#555] hover:text-[#888] transition-colors flex items-center gap-1"
+            >
+              <RefreshCw size={12} className={loadingHistory ? 'animate-spin' : ''} />
+              Actualizar
+            </button>
+          </div>
+
+          {loadingHistory && batches.length === 0 && (
+            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-8 text-center">
+              <Loader2 size={20} className="animate-spin text-[#555] mx-auto" />
+            </div>
+          )}
+
+          {!loadingHistory && batches.length === 0 && (
+            <div className="bg-[#1a1a1a] border border-[#333] rounded-2xl p-8 text-center">
+              <Clock size={28} className="text-[#333] mx-auto mb-2" />
+              <p className="text-[#555] text-sm">Aún no hay generaciones masivas</p>
+            </div>
+          )}
+
+          {batches.map(batch => {
+            const isExpanded = expandedBatch === batch.id
+            const date = new Date(batch.createdAt).toLocaleString('es-CO', {
+              day:    '2-digit',
+              month:  'short',
+              year:   'numeric',
+              hour:   '2-digit',
+              minute: '2-digit',
+            })
+            const previews = (batch.previews ?? []) as KitPreview[]
+
+            return (
+              <div key={batch.id} className="bg-[#1a1a1a] border border-[#333] rounded-2xl overflow-hidden">
+                {/* Batch header row */}
+                <button
+                  onClick={() => setExpandedBatch(isExpanded ? null : batch.id)}
+                  className="w-full px-5 py-4 flex items-center gap-4 hover:bg-[#222] transition-colors text-left"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white font-semibold text-sm">{date}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+                        ${batch.status === 'done'    ? 'bg-green-950 text-green-400'
+                        : batch.status === 'partial' ? 'bg-yellow-950 text-yellow-400'
+                        :                              'bg-red-950 text-red-400'}`}>
+                        {batch.status === 'done' ? 'Completo' : batch.status === 'partial' ? 'Parcial' : 'Error'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 mt-1.5 text-xs text-[#888]">
+                      <span>{batch.totalRows} restaurantes</span>
+                      <span className="text-green-400">{batch.successful} exitosos</span>
+                      {batch.failed > 0 && <span className="text-red-400">{batch.failed} fallidos</span>}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {batch.zipUrl && (
+                      <a
+                        href={batch.zipUrl}
+                        download
+                        onClick={e => e.stopPropagation()}
+                        className="flex items-center gap-1 text-xs text-[#FF441B] border border-[#FF441B]/40
+                          px-2.5 py-1.5 rounded-lg hover:bg-[#FF441B]/10 transition-colors font-semibold"
+                      >
+                        <Download size={12} />
+                        ZIP
+                      </a>
+                    )}
+                    {isExpanded
+                      ? <ChevronDown size={16} className="text-[#555]" />
+                      : <ChevronRight size={16} className="text-[#555]" />}
+                  </div>
+                </button>
+
+                {/* Expanded: kit previews */}
+                {isExpanded && (
+                  <div className="border-t border-[#333] p-5">
+                    {previews.length === 0 ? (
+                      <p className="text-[#555] text-sm text-center py-4">Sin imágenes guardadas para este batch</p>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {previews.map((kit, i) => (
+                          <div key={i} className="space-y-1.5">
+                            <div className="relative aspect-square rounded-xl overflow-hidden bg-[#222] border border-[#333]">
+                              {kit.feedUrl ? (
+                                <img
+                                  src={kit.feedUrl}
+                                  alt={kit.product}
+                                  className="w-full h-full object-cover"
+                                  onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                                />
+                              ) : (
+                                <div className="flex items-center justify-center h-full">
+                                  <ImageIcon size={20} className="text-[#444]" />
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-xs text-white font-medium truncate leading-tight">{kit.product}</p>
+                            <p className="text-xs text-[#888] truncate">{kit.restaurant}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Error list if any */}
+                    {batch.errors && (batch.errors as string[]).length > 0 && (
+                      <div className="mt-4 bg-red-950/20 border border-red-800/20 rounded-xl p-3">
+                        <p className="text-red-400 text-xs font-semibold mb-1.5">
+                          {(batch.errors as string[]).length} error(es) en este batch:
+                        </p>
+                        <ul className="text-red-500/70 text-xs space-y-0.5">
+                          {(batch.errors as string[]).slice(0, 5).map((e, i) => (
+                            <li key={i} className="truncate">· {e}</li>
+                          ))}
+                          {(batch.errors as string[]).length > 5 && (
+                            <li className="text-red-700">+{(batch.errors as string[]).length - 5} más</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
 
       </div>
     </div>
