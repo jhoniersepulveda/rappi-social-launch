@@ -8,6 +8,12 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      screens: {
+        xs: '480px',
+      },
+      scale: {
+        '102': '1.02',
+      },
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
